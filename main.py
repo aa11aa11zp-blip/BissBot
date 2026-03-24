@@ -6,7 +6,7 @@ import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
 
-# ---------------- LOGGING ----------------
+# ---------------- LOG ----------------
 logging.basicConfig(level=logging.INFO)
 
 # ---------------- CONFIG ----------------
@@ -30,17 +30,18 @@ CREATE TABLE IF NOT EXISTS users (
 """)
 conn.commit()
 
-# ---------------- FUNCTIONS ----------------
-async def check_join(user_id, context):
+# ---------------- JOIN CHECK ----------------
+async def is_joined(user_id, context):
     for ch in CHANNELS:
         try:
             member = await context.bot.get_chat_member(ch, user_id)
-            if member.status in ["left", "kicked"]:
+            if member.status not in ["member", "administrator", "creator"]:
                 return False
         except:
             return False
     return True
 
+# ---------------- USER ----------------
 def add_user(user_id, ref=None):
     cur.execute("INSERT OR IGNORE INTO users (user_id, invited_by) VALUES (?,?)", (user_id, ref))
     conn.commit()
@@ -62,18 +63,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ref = int(args[0]) if args else None
     add_user(user.id, ref)
 
-    if not await check_join(user.id, context):
-        buttons = [
-            [InlineKeyboardButton("📢 Join 1", url="https://t.me/ProTech43")],
-            [InlineKeyboardButton("📢 Join 2", url="https://t.me/HematTech")],
-            [InlineKeyboardButton("📢 Join 3", url="https://t.me/Pro43Zone")],
-            [InlineKeyboardButton("📢 Join 4", url="https://t.me/SQ_Botz")]
-        ]
-        await update.message.reply_text(
-            "⚠️ ټول چینلونه Join کړه بیا Start وکړه!",
-            reply_markup=InlineKeyboardMarkup(buttons)
-        )
-        return
+    # ADMIN bypass
+    if user.id != ADMIN_ID:
+        if not await is_joined(user.id, context):
+            buttons = [
+                [InlineKeyboardButton("📢 Join 1", url="https://t.me/ProTech43")],
+                [InlineKeyboardButton("📢 Join 2", url="https://t.me/HematTech")],
+                [InlineKeyboardButton("📢 Join 3", url="https://t.me/Pro43Zone")],
+                [InlineKeyboardButton("📢 Join 4", url="https://t.me/SQ_Botz")],
+                [InlineKeyboardButton("✅ Check Join", callback_data="check_join")]
+            ]
+
+            await update.message.reply_text(
+                "⚠️ مهرباني وکړه ټول چینلونه Join کړه!",
+                reply_markup=InlineKeyboardMarkup(buttons)
+            )
+            return
 
     keyboard = [
         [InlineKeyboardButton("📱 Number واخله", callback_data="get")],
@@ -81,29 +86,120 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await update.message.reply_text(
-        "✨ Welcome OTP Bot ✨\n\nیو انتخاب وکړه:",
+        "✨ OTP BOT ته ښه راغلاست ✨\n\nانتخاب وکړه:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ---------------- BUTTON ----------------
+# ---------------- BUTTONS ----------------
 async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
     user_id = query.from_user.id
 
-    if query.data == "get":
+    # CHECK JOIN BUTTON
+    if query.data == "check_join":
+        if await is_joined(user_id, context) or user_id == ADMIN_ID:
+            await query.message.edit_text("✅ ته چینلونو کې شامل یې! /start ولیکه")
+        else:
+            await query.answer("❌ لا هم Join نه یې!", show_alert=True)
+
+    # GET NUMBER
+    elif query.data == "get":
+
+        # admin bypass
+        if user_id != ADMIN_ID:
+            refs = get_refs(user_id)
+
+            if refs < 2:
+                link = f"https://t.me/YOUR_BOT?start={user_id}"
+                await query.message.reply_text(
+                    f"❌ 2 ریفیرل ته ضرورت دی!\n\n🔗 لینک:\n{link}"
+                )
+                return
+
+            cur.execute("UPDATE users SET referrals = referrals - 2 WHERE user_id=?", (user_id,))
+            conn.commit()
+
+        await query.message.reply_text("📩 سرویس ولیکه (WhatsApp / Telegram)")
+        context.user_data["wait_service"] = True
+
+    # REFERRAL
+    elif query.data == "ref":
         refs = get_refs(user_id)
+        link = f"https://t.me/YOUR_BOT?start={user_id}"
 
-        if refs < 2:
-            link = f"https://t.me/YOUR_BOT?start={user_id}"
-            await query.message.reply_text(
-                f"❌ 2 ریفیرل ته ضرورت دی!\n\n🔗 لینک:\n{link}"
-            )
-            return
+        await query.message.reply_text(
+            f"👥 ستا ریفیرل: {refs}\n\n🔗 لینک:\n{link}"
+        )
 
-        cur.execute("UPDATE users SET referrals = referrals - 2 WHERE user_id=?", (user_id,))
-        conn.commit()
+# ---------------- API ----------------
+def fetch_sms():
+    try:
+        r = requests.get(API_URL, params={"token": API_TOKEN}, timeout=15)
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except:
+        return []
+
+# ---------------- MESSAGE ----------------
+async def message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get("wait_service"):
+        context.user_data["wait_service"] = False
+
+        number = "+1234567890"
+        await update.message.reply_text(
+            f"📞 نمبر:\n{number}\n\n⏳ OTP ته انتظار..."
+        )
+
+        for _ in range(12):
+            data = fetch_sms()
+
+            for entry in data:
+                try:
+                    msg = entry[2]
+                except:
+                    continue
+
+                otp = re.search(r"\b\d{4,8}\b", msg)
+                if otp:
+                    await update.message.reply_text(
+                        f"✅ OTP:\n🔑 {otp.group()}"
+                    )
+                    return
+
+            time.sleep(5)
+
+        await update.message.reply_text("❌ OTP ونه راغی!")
+
+# ---------------- BROADCAST ----------------
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.message.from_user.id != ADMIN_ID:
+        return
+
+    text = " ".join(context.args)
+
+    cur.execute("SELECT user_id FROM users")
+    users = cur.fetchall()
+
+    for u in users:
+        try:
+            await context.bot.send_message(chat_id=u[0], text=text)
+        except:
+            pass
+
+    await update.message.reply_text("✅ Broadcast وشو")
+
+# ---------------- MAIN ----------------
+app = ApplicationBuilder().token(BOT_TOKEN).concurrent_updates(True).build()
+
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(buttons))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, message))
+app.add_handler(CommandHandler("broadcast", broadcast))
+
+print("🚀 Bot Running...")
+app.run_polling(close_loop=False)        conn.commit()
 
         await query.message.reply_text("📩 سرویس ولیکه (WhatsApp / Telegram)")
         context.user_data["wait_service"] = True
