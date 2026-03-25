@@ -10,6 +10,15 @@ BOT_TOKEN = "8281944831:AAGrz2zrLVLwdDd2BKISYUndRnD6yLn8pEE"
 API_URL = "http://147.135.212.197/crapi/st/viewstats"
 API_TOKEN = "RFdUREJBUzR9T4dVc49ndmFra1NYV5CIhpGVcnaOYmqHhJZXfYGJSQ=="
 
+# ---------------- FETCH ----------------
+def fetch_data():
+    try:
+        r = requests.get(API_URL, params={"token": API_TOKEN}, timeout=10)
+        data = r.json()
+        return data if isinstance(data, list) else []
+    except:
+        return []
+
 # ---------------- START ----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -17,7 +26,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await update.message.reply_text(
-        "✨ Welcome OTP Bot ✨\n\nClick button to get number:",
+        "✨ OTP Bot ✨\n\nGet number and receive OTP:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
@@ -26,8 +35,17 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
+    # ---------------- GET NUMBER ----------------
     if query.data == "get_number":
-        number = "+1234567890"  # دلته خپل نمبر API سره وصل کړه
+        data = fetch_data()
+
+        if not data:
+            await query.message.reply_text("❌ نمبر پیدا نشو!")
+            return
+
+        # اول available نمبر
+        entry = data[0]
+        number = entry[1]
 
         context.user_data["number"] = number
 
@@ -40,32 +58,36 @@ async def buttons(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
+    # ---------------- GET OTP ----------------
     elif query.data == "get_otp":
+        number = context.user_data.get("number")
+
+        if not number:
+            await query.message.reply_text("❌ اول نمبر واخله!")
+            return
+
         await query.message.reply_text("⏳ Waiting for OTP...")
 
-        # OTP fetch loop
-        for _ in range(12):
-            try:
-                res = requests.get(API_URL, params={"token": API_TOKEN}, timeout=10)
-                data = res.json()
+        # loop for OTP
+        for _ in range(15):
+            data = fetch_data()
 
-                if isinstance(data, list):
-                    for entry in data:
-                        msg = entry[2]
+            for entry in data:
+                phone = entry[1]
+                message = entry[2]
 
-                        otp = re.search(r"\b\d{4,8}\b", msg)
-                        if otp:
-                            await query.message.reply_text(
-                                f"✅ OTP Code:\n\n🔑 {otp.group()}"
-                            )
-                            return
-
-            except:
-                pass
+                # فقط هماغه نمبر
+                if phone == number:
+                    otp = re.search(r"\b\d{4,8}\b", message)
+                    if otp:
+                        await query.message.reply_text(
+                            f"✅ OTP:\n\n🔑 {otp.group()}"
+                        )
+                        return
 
             time.sleep(5)
 
-        await query.message.reply_text("❌ OTP not received!")
+        await query.message.reply_text("❌ OTP نه دی راغلی!")
 
 # ---------------- MAIN ----------------
 app = ApplicationBuilder().token(BOT_TOKEN).build()
